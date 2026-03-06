@@ -1,0 +1,79 @@
+package cn.kurt6.cobblemon_ranked.client.network
+
+import cn.kurt6.cobblemon_ranked.client.gui.ModeScreen
+import cn.kurt6.cobblemon_ranked.client.gui.ModeScreen.Companion.modeName
+import cn.kurt6.cobblemon_ranked.network.ClientVersionPayload
+import cn.kurt6.cobblemon_ranked.network.LeaderboardPayload
+import cn.kurt6.cobblemon_ranked.network.PlayerRankDataPayload
+import cn.kurt6.cobblemon_ranked.network.RequestType
+import cn.kurt6.cobblemon_ranked.network.SeasonInfoTextPayload
+import cn.kurt6.cobblemon_ranked.network.TeamSelectionStartPayload
+import cn.kurt6.cobblemon_ranked.network.TeamSelectionEndPayload
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking
+import net.minecraft.client.MinecraftClient
+import net.minecraft.text.Text.translatable
+
+const val CLIENT_MOD_VERSION = "1.4.1"
+
+fun registerClientReceivers() {
+    ClientPlayConnectionEvents.JOIN.register { handler, sender, client ->
+        ClientPlayNetworking.send(ClientVersionPayload(CLIENT_MOD_VERSION))
+    }
+
+    ClientPlayNetworking.registerGlobalReceiver(PlayerRankDataPayload.ID) { payload, _ ->
+        val total = payload.wins + payload.losses
+        val rate = if (total == 0) 0.0 else payload.wins.toDouble() / total * 100
+        val rankStr = payload.globalRank?.let { "#$it" } ?: translatable("cobblemon_ranked.not_ranked").string
+
+        val info = buildString {
+            append(translatable("cobblemon_ranked.info.title", payload.playerName, modeName(payload.format).string, payload.seasonId).string + "\n")
+            append(translatable("cobblemon_ranked.info.rank", payload.rankTitle, payload.elo).string + "\n")
+            append(translatable("cobblemon_ranked.info.global_rank", rankStr).string + "\n")
+            append(translatable("cobblemon_ranked.info.record", payload.wins, payload.losses, rate).string + "\n")
+            append(translatable("cobblemon_ranked.info.streak", payload.winStreak, payload.bestWinStreak).string + "\n")
+            append(translatable("cobblemon_ranked.info.flee", payload.fleeCount).string)
+        }
+
+        updateScreenInfo(RequestType.PLAYER, info)
+    }
+
+    ClientPlayNetworking.registerGlobalReceiver(SeasonInfoTextPayload.ID) { payload, _ ->
+        updateScreenInfo(RequestType.SEASON, payload.text)
+    }
+
+    ClientPlayNetworking.registerGlobalReceiver(LeaderboardPayload.ID) { payload, _ ->
+        updateScreenInfo(RequestType.LEADERBOARD, payload.text)
+    }
+
+    ClientPlayNetworking.registerGlobalReceiver(TeamSelectionStartPayload.ID) { payload, context ->
+        context.client().execute {
+            context.client().setScreen(
+                cn.kurt6.cobblemon_ranked.client.gui.TeamSelectionScreen(
+                    payload.limit,
+                    payload.timeLimitSeconds,
+                    payload.opponentName,
+                    payload.opponentTeam,
+                    payload.yourTeam
+                )
+            )
+        }
+    }
+
+    ClientPlayNetworking.registerGlobalReceiver(TeamSelectionEndPayload.ID) { _, context ->
+        context.client().execute {
+            if (context.client().currentScreen is cn.kurt6.cobblemon_ranked.client.gui.TeamSelectionScreen) {
+                context.client().currentScreen?.close()
+            }
+        }
+    }
+}
+
+private fun updateScreenInfo(type: RequestType, text: String) {
+    MinecraftClient.getInstance().execute {
+        val screen = MinecraftClient.getInstance().currentScreen
+        if (screen is ModeScreen) {
+            screen.updateInfo(type, text)
+        }
+    }
+}
